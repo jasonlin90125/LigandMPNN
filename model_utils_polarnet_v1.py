@@ -52,6 +52,114 @@ def get_max_polar_residue(logits):
     
     return result
 
+'''
+class GreedyNearestNeighborProtein:
+    def __init__(self, protein_tensor, device='cuda' if torch.cuda.is_available() else 'cpu'):
+        self.device = device
+        self.protein = protein_tensor.to(self.device)
+        self.num_residues = self.protein.shape[1]
+        self.calpha_coords = self.protein[0, :, 1, :]  # Assuming Cα is the second atom (index 1)
+        self.distance_matrix = self._create_distance_matrix()
+        self.visited = torch.zeros(self.num_residues, dtype=torch.bool, device=self.device)
+
+    def _create_distance_matrix(self):
+        diff = self.calpha_coords.unsqueeze(1) - self.calpha_coords.unsqueeze(0)
+        return torch.norm(diff, dim=2)
+
+    def run(self):
+        # Randomly select a starting residue
+        start_index = torch.randint(self.num_residues, (1,), device=self.device)
+        path = torch.zeros(self.num_residues, dtype=torch.long, device=self.device)
+        path[0] = start_index
+        self.visited[start_index] = True
+
+        for i in range(1, self.num_residues):
+            current_index = path[i-1]
+            nearest_index = self._find_nearest_unvisited(current_index)
+            path[i] = nearest_index
+            self.visited[nearest_index] = True
+
+        return path
+
+    def _find_nearest_unvisited(self, current_index):
+        distances = self.distance_matrix[current_index]
+        distances[self.visited] = float('inf')
+        return torch.argmin(distances, keepdim=True)
+
+def get_ltr_decoding_order(self, feature_dict):
+    # Left-to-right
+    S_true = feature_dict[
+        "S"
+    ]
+    device = S_true.device
+    B, L = S_true.shape
+    randn = feature_dict["randn"]
+    return torch.arange(L, device=device).unsqueeze(0).expand(B, -1)
+
+    # Greedy
+    #algorithm = GreedyNearestNeighborProtein(feature_dict["X"])
+    #path = algorithm.run()
+    #return path.unsqueeze(0)
+    
+def get_max_sorted_decoding_order(logits):
+    B, L, _ = logits.shape
+    
+    # Get the maximum values for each position, considering only indices 0-19
+    max_values, _ = torch.max(logits[:, :, :20], dim=2)
+    
+    # Sort the max values to get the decoding order
+    _, decoding_order = torch.sort(max_values, dim=1, descending=True)
+    
+    return decoding_order
+
+def get_category_sorted_decoding_order(logits):    
+    B, L, _ = logits.shape
+    device = logits.device
+
+    def get_category_info(max_values, argmax, category_indices):
+        category_mask = torch.isin(argmax, category_indices)
+        category_max = torch.where(category_mask, max_values, torch.tensor(float('-inf'), device=device))
+        category_indices = torch.where(category_mask, torch.arange(L, device=device).unsqueeze(0).expand(B, L), torch.tensor(float('-inf'), device=device))
+        return category_max, category_indices
+
+    def unique_preserving_order(input_tensor):
+        seen = set()
+        return torch.tensor([x.item() for x in input_tensor if not (x.item() in seen or seen.add(x.item()))], device=device)
+
+    # Define category indices
+    nonpolar = torch.tensor([0, 1, 5, 7, 9, 10, 4, 12, 17, 18], device=device)
+    charged_polar = torch.tensor([2, 3, 6, 8, 14], device=device)
+    uncharged_polar = torch.tensor([11, 13, 15, 16, 19], device=device)
+
+    combined_sorted = torch.zeros((B, L), device=device)
+    for B_ in range(B):
+        # Find max and argmax of each amino acid prediction (0 to 19)
+        max_values, argmax = logits[B_, :, :20].max(dim=1)
+
+        # Get category max values and indices
+        uncharged_polar_max, uncharged_polar_indices = get_category_info(max_values, argmax, uncharged_polar)
+        charged_polar_max, charged_polar_indices = get_category_info(max_values, argmax, charged_polar)
+        nonpolar_max, nonpolar_indices = get_category_info(max_values, argmax, nonpolar)
+
+        sorted_uncharged_polar, sorted_uncharged_polar_ind = torch.sort(uncharged_polar_max, dim=-1, descending=True)
+        sorted_charged_polar, sorted_charged_polar_ind = torch.sort(charged_polar_max, dim=-1, descending=True)
+        sorted_nonpolar, sorted_nonpolar_ind = torch.sort(nonpolar_max, dim=-1, descending=True)
+
+        finite_mask_uncharged = torch.isfinite(sorted_uncharged_polar)
+        filtered_uncharged_ind = sorted_uncharged_polar_ind[finite_mask_uncharged]
+
+        finite_mask_charged = torch.isfinite(sorted_charged_polar)
+        filtered_charged_ind = sorted_charged_polar_ind[finite_mask_charged]
+
+        finite_mask_nonpolar = torch.isfinite(sorted_nonpolar)
+        filtered_nonpolar_ind = sorted_nonpolar_ind[finite_mask_nonpolar]
+
+        # Combine sorted indices from all categories
+        combined_sorted[B_] = unique_preserving_order(torch.cat((filtered_uncharged_ind, filtered_charged_ind, filtered_nonpolar_ind)))
+
+    return combined_sorted.to(torch.int64)
+'''
+
 class ProteinMPNN(torch.nn.Module):
     def __init__(
         self,
@@ -272,14 +380,12 @@ class ProteinMPNN(torch.nn.Module):
         cb_dist_matrix = calculate_cb_distance_matrix(feature_dict["X"]) # [B,L,L]
         
         # Original Code
-        #decoding_order = torch.argsort(
-        #    (chain_mask + 0.0001) * (torch.abs(randn))
-        #)  # [numbers will be smaller for places where chain_M = 0.0 and higher for places where chain_M = 1.0]
-
-        # Change decoding order based on all 0s first, then all 1s (fixed, then redesigned, in order)
-        decoding_order = torch.argsort(chain_mask, stable=True)
+        decoding_order = torch.argsort(
+            (chain_mask + 0.0001) * (torch.abs(randn))
+        )  # [numbers will be smaller for places where chain_M = 0.0 and higher for places where chain_M = 1.0]
         print(f"decoding_order: {decoding_order}")
-
+        #decoding_order = self.get_ltr_decoding_order(feature_dict)
+        #print(f"new decoding_order: {decoding_order}")
         if len(symmetry_list_of_lists[0]) == 0 and len(symmetry_list_of_lists) == 1:
             E_idx = E_idx.repeat(B_decoder, 1, 1)
             permutation_matrix_reverse = torch.nn.functional.one_hot(
@@ -292,11 +398,9 @@ class ProteinMPNN(torch.nn.Module):
                 permutation_matrix_reverse,
             )
             mask_attend = torch.gather(order_mask_backward, 2, E_idx).unsqueeze(-1)
-            print(f"mask_attend shape: {mask_attend.shape}")
             mask_1D = mask.view([B, L, 1, 1])
             mask_bw = mask_1D * mask_attend
             mask_fw = mask_1D * (1.0 - mask_attend)
-            print(f"mask_fw shape: {mask_fw.shape}")
 
             # repeat for decoding
             S_true = S_true.repeat(B_decoder, 1)
@@ -323,16 +427,14 @@ class ProteinMPNN(torch.nn.Module):
             h_EXV_encoder = cat_neighbors_nodes(h_V, h_EX_encoder, E_idx)
             h_EXV_encoder_fw = mask_fw * h_EXV_encoder
 
-            # Initialize empty pass logits
             empty_pass_logits = torch.zeros(
-                (B_decoder, redesign_residues.size(dim=1), 21), device=device, dtype=torch.float32
-            ) # [B,R,21], R being number of redesigned residues
+                    (B_decoder, redesign_residues.size(dim=1), 21), device=device, dtype=torch.float32
+            ) # [B,R,21]
 
             # Empty Pass
-            print("Empty pass. Updating h_S using S_true.")
-            redesign_idx = 0
-            for t_ in range(L):
-                t = decoding_order[:, t_]  # [B]
+            print("Empty pass.")
+            for t_ in range(redesign_residues.size(dim=1)): # looping over each redesigned residues
+                t = redesign_residues[:, t_] # [B]
                 chain_mask_t = torch.gather(chain_mask, 1, t[:, None])[:, 0]  # [B]
                 mask_t = torch.gather(mask, 1, t[:, None])[:, 0]  # [B]
                 bias_t = torch.gather(bias, 1, t[:, None, None].repeat(1, 1, 21))[
@@ -383,62 +485,42 @@ class ProteinMPNN(torch.nn.Module):
                     1,
                     t[:, None, None].repeat(1, 1, h_V_stack[-1].shape[-1]),
                 )[:, 0]
-                logits = self.W_out(h_V_t)  # [B,21]
+                logits = self.W_out(h_V_t) # [B,21]
 
-                if (chain_mask_t == 0.0).all().item(): # fixed residue
-                    S_t = torch.gather(S_true, 1, t[:, None])[:, 0].long()
-                    h_S.scatter_(
-                        1,
-                        t[:, None, None].repeat(1, 1, h_S.shape[-1]),
-                        self.W_s(S_t)[:, None, :],
-                    )
-                    S.scatter_(1, t[:, None], S_t[:, None]) # Set fixed residues to true sequence
-                else: # redesign residue
-                    empty_pass_logits[:, redesign_idx] = logits
-                    redesign_idx += 1
+                empty_pass_logits[:, t_] = logits
 
-            print(f"h_S: {h_S}")
             print(f"Empty pass logits: {empty_pass_logits}")
             print(f"Empty pass logits shape: {empty_pass_logits.shape}")
 
-            polar_class = torch.tensor([2, 3, 6, 8, 11, 13, 14, 15, 16, 19], device=device)
-            polar_threshold = 0.5
-
-            #num_redesign = 5 # how many residues to explicitly force polars
-            #i_redesign = 0
-            done_designing = False
-            redesign_list = torch.tensor([], device=device)
+            num_redesign = 5 # how many residues to explicitly force polars
+            i_redesign = 0
             most_polar_logit_idx = get_max_polar_residue(empty_pass_logits) # 0, 1, 2, ..., R
             most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
-            #while i_redesign < num_redesign:
-            while not done_designing:
+            while i_redesign < num_redesign:
+            #for i in range(1):
                 print(f"Best polar residue: {most_polar_res}")
 
-                # Get logits
+                # Update sequence
                 t = most_polar_res # [B]
                 logits = empty_pass_logits[0][most_polar_logit_idx]
-
-                # Check polar threshold
-                logits_polar = logits[:, polar_class]
-                if max(logits_polar[0]) < polar_threshold:
-                    print("Done designing.")
-                    done_designing = True
-                    break
-
+                print(f"Logits before: {logits}")
                 # Force polar
                 logits[:, [0, 1, 5, 7, 9, 10, 4, 12, 17, 18]] = -10.0
 
-                #print(f"Logits after: {logits}")
+                print(f"Logits after: {logits}")
                 chain_mask_t = torch.gather(chain_mask, 1, t[:, None])[:, 0]  # [B]
+                print(f"Chain_mask_t: {chain_mask_t}")
                 log_probs = torch.nn.functional.log_softmax(logits, dim=-1)  # [B,21]
+                print(f"Log probs: {log_probs}")
 
-                # Use probability to update sequence
                 probs = torch.nn.functional.softmax(
                     logits, dim=-1
                 )  # [B,21]
                 probs_sample = probs[:, :20] / torch.sum(
                     probs[:, :20], dim=-1, keepdim=True
                 )  # hard omit X #[B,20]
+                
+                S_t = torch.multinomial(probs_sample, 1)[:, 0]  # [B]
 
                 all_probs.scatter_(
                     1,
@@ -450,8 +532,9 @@ class ProteinMPNN(torch.nn.Module):
                     t[:, None, None].repeat(1, 1, 21),
                     (chain_mask_t[:, None, None] * log_probs[:, None, :]).float(),
                 )
-                
-                S_t = torch.multinomial(probs_sample, 1)[:, 0].long()  # [B]
+                S_true_t = torch.gather(S_true, 1, t[:, None])[:, 0]
+                S_t = (S_t * chain_mask_t + S_true_t * (1.0 - chain_mask_t)).long()
+
                 h_S.scatter_(
                     1,
                     t[:, None, None].repeat(1, 1, h_S.shape[-1]),
@@ -459,181 +542,49 @@ class ProteinMPNN(torch.nn.Module):
                 )
                 S.scatter_(1, t[:, None], S_t[:, None])
                 design_type.scatter_(1, t[:, None], torch.ones_like(chain_mask_t)[:, None])
-                #design_type[:, t[0]] = 1
                 print('Sequence updated.')
-                #i_redesign += 1
-                redesign_list = torch.cat((redesign_list, most_polar_res), dim=0)
+                i_redesign += 1
 
                 # Remove index from redesigned_residues
                 redesign_residues = redesign_residues[redesign_residues != most_polar_res[0]].reshape(B, -1)
-                print(f"New redesign_residues shape: {redesign_residues.shape}")
+                print(redesign_residues.shape)
 
                 # Remove entry from empty_pass_logits
                 empty_pass_logits = torch.cat([empty_pass_logits[:, :most_polar_logit_idx[0], :], empty_pass_logits[:, most_polar_logit_idx[0]+1:, :]], dim=1)
                 print(f"New empty pass logits shape: {empty_pass_logits.shape}")
-                
+
                 # Update chain_mask
                 zeros = torch.zeros_like(chain_mask_t)
                 chain_mask.scatter_(1, t[:, None], zeros[:, None])
-                #print(f"New chain mask: {chain_mask}, with {torch.sum(chain_mask == 1).item()} as redesignable.")
+                print(f"New chain mask: {chain_mask}")
 
-                # Recalculate decoding order, permutation_order, and masks
-                decoding_order = torch.argsort(chain_mask, stable=True)
-                permutation_matrix_reverse = torch.nn.functional.one_hot(
-                    decoding_order, num_classes=L
-                ).float()
-                order_mask_backward = torch.einsum(
-                    "ij, biq, bjp->bqp",
-                    (1 - torch.triu(torch.ones(L, L, device=device))),
-                    permutation_matrix_reverse,
-                    permutation_matrix_reverse,
-                )
-                mask_attend = torch.gather(order_mask_backward, 2, E_idx).unsqueeze(-1)
-                mask_1D = mask.view([B, L, 1, 1])
-                mask_bw = mask_1D * mask_attend
-                mask_fw = mask_1D * (1.0 - mask_attend)
-                h_EXV_encoder_fw = mask_fw * h_EXV_encoder
-                h_V_stack = [h_V] + [
-                    torch.zeros_like(h_V, device=device)
-                    for _ in range(len(self.decoder_layers))
-                ]
+                neighbor_index = torch.argsort(cb_dist_matrix[0][most_polar_res[0]])[1] # closest neighbor that is not same residue
+                #neighbor_index = torch.unsqueeze(neighbor_index, 0)
+                print(f"Neighbor index: {neighbor_index}")
 
-                # Update empty_pass_logits by recalculating logits
-                redesign_idx = 0
-                num_updated = 0
-                for u_ in range(L):
-                    u = decoding_order[:, u_]  # [B]
-                    chain_mask_u = torch.gather(chain_mask, 1, u[:, None])[:, 0]  # [B]
-                    mask_u = torch.gather(mask, 1, u[:, None])[:, 0]  # [B]
-                    bias_u = torch.gather(bias, 1, u[:, None, None].repeat(1, 1, 21))[
-                        :, 0, :
-                    ]  # [B,21]
-
-                    E_idx_u = torch.gather(
-                        E_idx, 1, u[:, None, None].repeat(1, 1, E_idx.shape[-1])
-                    )
-                    h_E_u = torch.gather(
-                        h_E,
-                        1,
-                        u[:, None, None, None].repeat(1, 1, h_E.shape[-2], h_E.shape[-1]),
-                    )
-                    h_ES_u = cat_neighbors_nodes(h_S, h_E_t, E_idx_t)
-                    h_EXV_encoder_u = torch.gather(
-                        h_EXV_encoder_fw,
-                        1,
-                        u[:, None, None, None].repeat(
-                            1, 1, h_EXV_encoder_fw.shape[-2], h_EXV_encoder_fw.shape[-1]
-                        ),
-                    )
-
-                    mask_bw_u = torch.gather(
-                        mask_bw,
-                        1,
-                        u[:, None, None, None].repeat(
-                            1, 1, mask_bw.shape[-2], mask_bw.shape[-1]
-                        ),
-                    )
-
-                    for l, layer in enumerate(self.decoder_layers):
-                        h_ESV_decoder_u = cat_neighbors_nodes(h_V_stack[l], h_ES_u, E_idx_u)
-                        h_V_u = torch.gather(
-                            h_V_stack[l],
-                            1,
-                            u[:, None, None].repeat(1, 1, h_V_stack[l].shape[-1]),
-                        )
-                        h_ESV_u = mask_bw_u * h_ESV_decoder_u + h_EXV_encoder_u
-                        h_V_stack[l + 1].scatter_(
-                            1,
-                            u[:, None, None].repeat(1, 1, h_V.shape[-1]),
-                            layer(h_V_u, h_ESV_u, mask_V=mask_u),
-                        )
-
-                    h_V_u = torch.gather(
-                        h_V_stack[-1],
-                        1,
-                        u[:, None, None].repeat(1, 1, h_V_stack[-1].shape[-1]),
-                    )[:, 0]
-                    updated_logits = self.W_out(h_V_u)  # [B,21]
-
-                    if (chain_mask_u == 0.0).all().item(): # fixed residue
-                        continue
-                    else: # redesign residue
-                        if not torch.equal(empty_pass_logits[:, redesign_idx], updated_logits):
-                            empty_pass_logits[:, redesign_idx] = updated_logits # [B,21]
-                            num_updated += 1
-                        redesign_idx += 1
-
-                print(f"num_updated: {num_updated}")
-                print(f"Updated empty_pass_logits: {empty_pass_logits}")
-
-                # Find closest neighbor to the forced polar
-                neighbor_index_sorted = torch.argsort(cb_dist_matrix[0][most_polar_res[0]])
-                # Exclude residues that were forced to be polar from contention
-                neighbor_index = neighbor_index_sorted[~torch.isin(neighbor_index_sorted, redesign_list)][0] # Get first element
-
-                print(f"Neighbor to forced polar: {neighbor_index}")
-
-                # Neighbor logic
-                candidate_found = False
-                seen_residues = redesign_list # initialize seen
-                continuous_fixed = 0
-                while not candidate_found:
-                    seen_residues = torch.cat((seen_residues, torch.tensor([neighbor_index], device=device)))
-                    if (redesign_residues == neighbor_index).any(): # Scenario 1: neighbor is redesigned residue
-                        print(f"Neighbor {neighbor_index} is a redesign residue.")
-                        candidate_found = True # loop ends!
-                        _, most_polar_logit_idx = torch.where(redesign_residues == neighbor_index) # ignore the B-index, get L-index
-                        most_polar_res = torch.unsqueeze(neighbor_index, 0)
-                    else: # Scenario 2: neighbor is fixed residue
-                        print(f"Neighbor {neighbor_index} is a fixed residue.") # neighbor is fixed residue
-
-                        continuous_fixed += 1
-                        if continuous_fixed == 3: # Seen three fixed residues in a row
-                            print("Three fixed residues in a row... Picking polar using max from empty logits.")
-                            candidate_found = True
-                            most_polar_logit_idx = get_max_polar_residue(empty_pass_logits) # 0, 1, 2, ..., R
-                            most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
-                        else:
-                            # If polar, find next neighbor. If nonpolar, go back to modified residue and find the next closest neighbor
-                            S_true_neighbor = torch.gather(S_true, 1, torch.unsqueeze(neighbor_index, 0)[:, None])[:, 0] # check true amino acid of fixed
-                            print(f"S_true_neighbor: {S_true_neighbor}")
-                            if torch.any(polar_class == S_true_neighbor).item():
-                                print(f"Fixed neighbor is polar.")
-                                neighbor_neighbor_sorted = torch.argsort(cb_dist_matrix[0][neighbor_index]) # neighbors of neighbor
-                                next_neighbor_index = neighbor_neighbor_sorted[~torch.isin(neighbor_neighbor_sorted, seen_residues)][0] # closest neighbor that has not been seen
-                                print(f"Next neighbor index: {next_neighbor_index}")
-                                neighbor_index = next_neighbor_index # Set new neighbor index
-                                continue
-                            else:
-                                print(f"Fixed neighbor is nonpolar.")
-                                neighbor_index = neighbor_index_sorted[~torch.isin(neighbor_index_sorted, seen_residues)][0]
-                                print(f"Next neighbor index: {neighbor_index}")
-                                continue
-
-            print(f"redesign_list: {redesign_list}")
-
-            # Randomize decoding order
-            decoding_order = torch.argsort(
-                (chain_mask + 0.0001) * (torch.abs(randn))
-            )
-            permutation_matrix_reverse = torch.nn.functional.one_hot(
-                    decoding_order, num_classes=L
-            ).float()
-            order_mask_backward = torch.einsum(
-                "ij, biq, bjp->bqp",
-                (1 - torch.triu(torch.ones(L, L, device=device))),
-                permutation_matrix_reverse,
-                permutation_matrix_reverse,
-            )
-            mask_attend = torch.gather(order_mask_backward, 2, E_idx).unsqueeze(-1)
-            mask_1D = mask.view([B, L, 1, 1])
-            mask_bw = mask_1D * mask_attend
-            mask_fw = mask_1D * (1.0 - mask_attend)
-            h_EXV_encoder_fw = mask_fw * h_EXV_encoder
-            h_V_stack = [h_V] + [
-                torch.zeros_like(h_V, device=device)
-                for _ in range(len(self.decoder_layers))
-            ]
+                if (redesign_residues == neighbor_index).any(): # neighbor is redesigned residue
+                    print(f"Neighbor {neighbor_index} is a redesigned residue.")
+                    _, most_polar_logit_idx = torch.where(redesign_residues == neighbor_index) # ignore the B-index, get L-index
+                    print(f"Logit index: {most_polar_logit_idx}")
+                    most_polar_res = torch.unsqueeze(neighbor_index, 0)
+                    print(most_polar_res)
+                else:
+                    print(f"Neighbor {neighbor_index} is a fixed residue.")
+                    neighbor_neighbor_sorted = torch.argsort(cb_dist_matrix[0][neighbor_index])
+                    next_neighbor_index = neighbor_neighbor_sorted[neighbor_neighbor_sorted != most_polar_res[0]][1] # closest neighbor that is not same residue or the previous
+                    print(f"Next neighbor index: {next_neighbor_index}")
+                    if (redesign_residues == next_neighbor_index).any(): # Next neighbor is redesign
+                        print(f"Next neighbor {next_neighbor_index} is redesign.")
+                        _, most_polar_logit_idx = torch.where(redesign_residues == next_neighbor_index) # ignore the B-index, get L-index
+                        print(f"Logit index: {most_polar_logit_idx}")
+                        most_polar_res = torch.unsqueeze(next_neighbor_index, 0)
+                        print(most_polar_res)
+                    else: # Next neighbor is fixed, use next highest polar based on empty pass
+                        print(f"Next neighbor {next_neighbor_index} is fixed.")
+                        most_polar_logit_idx = get_max_polar_residue(empty_pass_logits) # 0, 1, 2, ..., R
+                        print(f"Logit index: {most_polar_logit_idx}")
+                        most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
+                        print(most_polar_res)
 
             # Full Pass
             print("Full pass")
@@ -691,7 +642,6 @@ class ProteinMPNN(torch.nn.Module):
                 )[:, 0]
 
                 logits = self.W_out(h_V_t) # [B,21]
-
                 if (chain_mask_t == 0.0).all().item(): # fixed residue
                     continue
                 else: # redesign residue
@@ -943,6 +893,7 @@ class ProteinMPNN(torch.nn.Module):
             "decoding_order": decoding_order_out,
         }
         return output_dict
+
 
     def score(self, feature_dict, use_sequence: bool):
         B_decoder = feature_dict["batch_size"]

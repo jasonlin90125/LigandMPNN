@@ -126,6 +126,8 @@ def main(args) -> None:
     if args.fixed_residues_multi:
         with open(args.fixed_residues_multi, "r") as fh:
             fixed_residues_multi = json.load(fh)
+            for key, value in fixed_residues_multi.items():
+                fixed_residues_multi[key] = value.split()
     else:
         fixed_residues = [item for item in args.fixed_residues.split()]
         fixed_residues_multi = {}
@@ -135,6 +137,8 @@ def main(args) -> None:
     if args.redesigned_residues_multi:
         with open(args.redesigned_residues_multi, "r") as fh:
             redesigned_residues_multi = json.load(fh)
+            for key, value in redesigned_residues_multi.items():
+                redesigned_residues_multi[key] = value.split()
     else:
         redesigned_residues = [item for item in args.redesigned_residues.split()]
         redesigned_residues_multi = {}
@@ -416,6 +420,7 @@ def main(args) -> None:
             loss_list = []
             loss_per_residue_list = []
             loss_XY_list = []
+            design_type_list = []
             for _ in range(args.number_of_batches):
                 feature_dict["randn"] = torch.randn(
                     [feature_dict["batch_size"], feature_dict["mask"].shape[1]],
@@ -448,6 +453,7 @@ def main(args) -> None:
                 loss_list.append(loss)
                 loss_per_residue_list.append(loss_per_residue)
                 loss_XY_list.append(loss_XY)
+                design_type_list.append(output_dict["design_type"])
             S_stack = torch.cat(S_list, 0)
             log_probs_stack = torch.cat(log_probs_list, 0)
             sampling_probs_stack = torch.cat(sampling_probs_list, 0)
@@ -455,6 +461,7 @@ def main(args) -> None:
             loss_stack = torch.cat(loss_list, 0)
             loss_per_residue_stack = torch.cat(loss_per_residue_list, 0)
             loss_XY_stack = torch.cat(loss_XY_list, 0)
+            design_type_stack = torch.cat(design_type_list, 0)
             rec_mask = feature_dict["mask"][:1] * feature_dict["chain_mask"][:1]
             rec_stack = get_seq_rec(feature_dict["S"][:1], S_stack, rec_mask)
 
@@ -483,6 +490,8 @@ def main(args) -> None:
             out_dict["chain_mask"] = feature_dict["chain_mask"][0].cpu()
             out_dict["seed"] = seed
             out_dict["temperature"] = args.temperature
+            out_dict["design_type"] = design_type_stack.cpu()
+            # Output
             if args.save_stats:
                 torch.save(out_dict, output_stats_path)
 

@@ -285,10 +285,10 @@ class ProteinMPNN(torch.nn.Module):
 
         # Get buried residues
         neighbor_counts = (cb_dist_matrix < 10.0).sum(dim=-1) # less than 10 angstroms, more than 20 neighbors
-        buried_mask = neighbor_counts >= 20
+        buried_mask = neighbor_counts >= 20 # 20 default
         buried_residues = torch.nonzero(buried_mask)[:, 1]
 
-        print(f"buried_residues: {buried_residues}, len: {len(buried_residues)}")
+        print(f"buried_residues: {buried_residues}, len: {buried_residues.numel()}")
             
         # Original Code
         #decoding_order = torch.argsort(
@@ -417,20 +417,23 @@ class ProteinMPNN(torch.nn.Module):
                     redesign_idx += 1
 
             print(f"h_S: {h_S}")
-            torch.set_printoptions(profile="full")
             print(f"Empty pass logits: {empty_pass_logits}")
-            torch.set_printoptions(profile="default") # reset
             print(f"Empty pass logits shape: {empty_pass_logits.shape}")
 
-            # Get logits of buried residues
-            buried_indices = torch.nonzero(torch.isin(redesign_residues[0], buried_residues)).squeeze()
-            print(f"buried_indices: {buried_indices}, len: {len(buried_indices)}")
-
+            # Initialize class and threshold
             polar_class = torch.tensor([2, 3, 6, 8, 11, 13, 14, 15, 16, 19], device=device)
             polar_threshold = 0.5
 
+            # Initialize redesign_list and designing flag
             done_designing = False
             redesign_list = torch.tensor([], device=device)
+
+            # Get logits of buried residues
+            buried_indices = torch.nonzero(torch.isin(redesign_residues[0], buried_residues)).squeeze()
+            if buried_indices.numel() == 0:
+                print("No buried residues to start designing from! Not going to impose polars.")
+                done_designing = True
+
             most_polar_logit_idx = get_max_polar_residue(empty_pass_logits, buried_indices) # 0, 1, 2, ..., R
             most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
             while not done_designing:
@@ -442,7 +445,9 @@ class ProteinMPNN(torch.nn.Module):
 
                 # Check polar threshold
                 logits_polar = logits[:, polar_class]
+                print(logits_polar)
                 if max(logits_polar[0]) < polar_threshold:
+                    print(f"Residue {most_polar_res} does not have a suitable polar.")
                     print("Done designing.")
                     done_designing = True
                     break
@@ -494,7 +499,7 @@ class ProteinMPNN(torch.nn.Module):
 
                 # Recalculate buried indices that can be redesigned
                 buried_indices = torch.nonzero(torch.isin(redesign_residues[0], buried_residues)).squeeze()
-                print(f"buried_indices: {buried_indices}, len: {len(buried_indices)}")
+                print(f"buried_indices: {buried_indices}, len: {buried_indices.numel()}")
                 
                 # Update chain_mask
                 zeros = torch.zeros_like(chain_mask_t)
@@ -588,7 +593,7 @@ class ProteinMPNN(torch.nn.Module):
                         redesign_idx += 1
 
                 print(f"num_updated: {num_updated}")
-                print(f"Updated empty_pass_logits: {empty_pass_logits}")
+                #print(f"Updated empty_pass_logits: {empty_pass_logits}")
 
                 # Find closest neighbor to the forced polar
                 neighbor_index_sorted = torch.argsort(cb_dist_matrix[0][most_polar_res[0]])
@@ -614,9 +619,14 @@ class ProteinMPNN(torch.nn.Module):
                         continuous_fixed += 1
                         if continuous_fixed == 3: # Seen three fixed residues in a row
                             print("Three fixed residues in a row... Picking polar using max from empty logits.")
-                            candidate_found = True
-                            most_polar_logit_idx = get_max_polar_residue(empty_pass_logits, buried_indices) # 0, 1, 2, ..., R
-                            most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
+                            if buried_indices.numel() > 0:
+                                candidate_found = True
+                                most_polar_logit_idx = get_max_polar_residue(empty_pass_logits, buried_indices) # 0, 1, 2, ..., R
+                                most_polar_res = redesign_residues[:, most_polar_logit_idx[0]] # index of most polar: [B,R] where R in [0, L)
+                            else:
+                                print("No more residues to pick from. Done designing...")
+                                done_designing = True
+                                break
                         else:
                             # If polar, find next neighbor. If nonpolar, go back to modified residue and find the next closest neighbor
                             S_true_neighbor = torch.gather(S_true, 1, torch.unsqueeze(neighbor_index, 0)[:, None])[:, 0] # check true amino acid of fixed

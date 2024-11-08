@@ -21,4 +21,7 @@ conda activate ligandmpnn
 #python run.py --seed 111 --model_type "soluble_mpnn" --pdb_path_multi "./inputs/monomers.json" --out_folder "./outputs/solublempnn_whole" --save_stats 1
 #python run.py --seed 111 --model_type "soluble_mpnn" --pdb_path_multi "./inputs/monomers.json" --redesigned_residues_multi "./inputs/monomers_core.json" --out_folder "./outputs/solublempnn_core" --save_stats 1
 
-python run.py --seed 111 --model_type "ligand_mpnn" --pdb_path_multi "./inputs/monomers_sample.json" --redesigned_residues_multi "./inputs/monomers_core_sample.json" --out_folder "./outputs/monomers_sample" --save_stats 1
+#python run.py --seed 111 --model_type "ligand_mpnn" --pdb_path_multi "./inputs/monomers_sample.json" --redesigned_residues_multi "./inputs/monomers_core_sample.json" --out_folder "./outputs/monomers_sample" --save_stats 1
+#python run.py --seed 111 --model_type "ligand_mpnn" --pdb_path_multi "./inputs/monomers.json" --redesigned_residues_multi "./inputs/monomers_core.json" --out_folder "./outputs/monomers_core_polarnet_v3" --save_stats 1
+
+python run.py --seed 111 --model_type "ligand_mpnn" --pdb_path_multi "./inputs/tomiris_test_case.json" --redesigned_residues_multi "./inputs/tomiris_test_case_core.json" --out_folder "./outputs/tomiris_test_case_0.0" --save_stats 1
